@@ -4,13 +4,25 @@
 
 ## 安装
 
-需要 Unity 2022.3 或更新版本。推荐在 Unity **Window → Package Manager → + → Add package from git URL** 中输入：
+需要 Unity 2022.3 或更新版本。任选下面一种方式安装，同一项目不要重复安装。
+
+### 方法一：Git URL（方便获取更新）
+
+在 Unity **Window → Package Manager → + → Add package from git URL** 中输入：
 
 ```text
 https://github.com/dungezi/unity-camera-capture-studio.git?path=/Packages/com.camera-capture.studio
 ```
 
 如果仓库设为私有，需要在本机 Git 中配置对此 GitHub 仓库的访问权限。也可把 `Packages/com.camera-capture.studio` 文件夹复制到 Unity 项目的 `Packages` 目录。
+
+### 方法二：本地 `.unitypackage`
+
+1. 从仓库下载 [CameraCaptureStudio-1.0.0.unitypackage](dist/CameraCaptureStudio-1.0.0.unitypackage) 到本机。
+2. 在 Unity 中选择 **Assets → Import Package → Custom Package…**，打开下载的文件。
+3. 保持导入项目全选，点击 **Import**。插件会安装到 `Assets/CameraCaptureStudio`，之后从顶栏 **工具 → 相机截图工作室** 打开。
+
+此文件包含脚本、Shader、预设字体和对应的 Unity `.meta`，不需要联网安装。维护者在修改插件后可运行 `python tools/build_unitypackage.py` 重新生成，并用 `python tools/build_unitypackage.py --check` 核对发布文件。[Unity 官方本地资源包导入说明](https://docs.unity3d.com/2022.3/Documentation/Manual/AssetPackagesImport.html)。
 
 本插件只在 Unity 编辑器运行，不向游戏构建添加运行时代码。无需 TextMesh Pro、URP/HDRP 专属后处理包。
 

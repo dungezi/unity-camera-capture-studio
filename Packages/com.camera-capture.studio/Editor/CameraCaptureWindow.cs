@@ -75,6 +75,9 @@ namespace CameraCaptureStudio
                 font = AssetDatabase.LoadAssetAtPath<Font>(
                     "Packages/com.camera-capture.studio/Fonts/BRUSHSCI.TTF");
                 if (font == null)
+                    font = AssetDatabase.LoadAssetAtPath<Font>(
+                        "Assets/CameraCaptureStudio/Fonts/BRUSHSCI.TTF");
+                if (font == null)
                 {
                     string[] guids = AssetDatabase.FindAssets("BRUSHSCI t:Font");
                     if (guids.Length > 0)
