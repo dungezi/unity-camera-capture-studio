@@ -48,6 +48,7 @@ namespace CameraCaptureStudio
         internal int JpegQuality;
         internal string Directory;
         internal string FileName;
+        internal bool KeepSkinnedMeshesUpdated;
     }
 
     internal static class CameraCaptureProcessor
@@ -56,58 +57,30 @@ namespace CameraCaptureStudio
         {
             Validate(options);
             preview = null;
-            RenderTexture cameraTarget = null;
             RenderTexture finishedTarget = null;
-            Material filterMaterial = null;
+            Texture2D fullResolution = null;
             RenderTexture previousActive = RenderTexture.active;
-            RenderTexture previousCameraTarget = options.Camera.targetTexture;
-
             try
             {
-                cameraTarget = RenderTexture.GetTemporary(options.Width, options.Height, 24, RenderTextureFormat.ARGB32);
                 finishedTarget = RenderTexture.GetTemporary(options.Width, options.Height, 0, RenderTextureFormat.ARGB32);
-                cameraTarget.filterMode = FilterMode.Bilinear;
+                if (!finishedTarget.IsCreated() && !finishedTarget.Create())
+                    throw new InvalidOperationException("无法分配导出纹理；请降低分辨率或释放显存。");
                 finishedTarget.filterMode = FilterMode.Bilinear;
-
-                try
-                {
-                    options.Camera.targetTexture = cameraTarget;
-                    options.Camera.Render();
-                }
-                finally
-                {
-                    options.Camera.targetTexture = previousCameraTarget;
-                }
-
-                if (options.Filter == CaptureFilter.None)
-                {
-                    Graphics.Blit(cameraTarget, finishedTarget);
-                }
-                else
-                {
-                    Shader shader = Shader.Find("Hidden/CameraCaptureStudio/Filter");
-                    if (shader == null)
-                        throw new InvalidOperationException("找不到滤镜 Shader，请重新导入插件。");
-                    filterMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-                    filterMaterial.SetFloat("_Preset", (int)options.Filter);
-                    Graphics.Blit(cameraTarget, finishedTarget, filterMaterial);
-                }
-
-                if (!string.IsNullOrEmpty(options.Text))
-                    DrawText(finishedTarget, options);
+                RenderFrame(options, finishedTarget);
 
                 RenderTexture.active = finishedTarget;
                 TextureFormat textureFormat = options.Format == CaptureFormat.Png ? TextureFormat.RGBA32 : TextureFormat.RGB24;
-                preview = new Texture2D(options.Width, options.Height, textureFormat, false);
-                preview.ReadPixels(new Rect(0, 0, options.Width, options.Height), 0, 0);
-                preview.Apply(false, false);
+                fullResolution = new Texture2D(options.Width, options.Height, textureFormat, false);
+                fullResolution.ReadPixels(new Rect(0, 0, options.Width, options.Height), 0, 0);
+                fullResolution.Apply(false, false);
 
                 byte[] bytes = options.Format == CaptureFormat.Png
-                    ? preview.EncodeToPNG()
-                    : preview.EncodeToJPG(options.JpegQuality);
+                    ? fullResolution.EncodeToPNG()
+                    : fullResolution.EncodeToJPG(options.JpegQuality);
                 if (bytes == null || bytes.Length == 0)
                     throw new InvalidOperationException("图片编码失败。");
 
+                preview = CreateSmallPreview(finishedTarget);
                 string path = GetAvailablePath(options);
                 File.WriteAllBytes(path, bytes);
                 if (path.StartsWith(Application.dataPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
@@ -125,11 +98,112 @@ namespace CameraCaptureStudio
             }
             finally
             {
+                RenderTexture.active = previousActive;
+                if (fullResolution != null) UnityEngine.Object.DestroyImmediate(fullResolution);
+                if (finishedTarget != null) RenderTexture.ReleaseTemporary(finishedTarget);
+            }
+        }
+
+        internal static void RenderPreview(CaptureOptions options, RenderTexture target)
+        {
+            if (options.Camera == null || target == null || options.Width < 1 || options.Height < 1) return;
+            float scale = Mathf.Min((float)target.width / options.Width, (float)target.height / options.Height);
+            var scaled = new CaptureOptions
+            {
+                Camera = options.Camera,
+                Width = target.width,
+                Height = target.height,
+                Filter = options.Filter,
+                Text = options.Font == null ? null : options.Text,
+                Font = options.Font,
+                FontSize = Mathf.Max(1, Mathf.RoundToInt(options.FontSize * scale)),
+                TextColor = options.TextColor,
+                Placement = options.Placement,
+                Margin = Mathf.RoundToInt(options.Margin * scale),
+                KeepSkinnedMeshesUpdated = options.KeepSkinnedMeshesUpdated
+            };
+            RenderFrame(scaled, target);
+        }
+
+        private static void RenderFrame(CaptureOptions options, RenderTexture target)
+        {
+            RenderTexture cameraTarget = null;
+            Material filterMaterial = null;
+            RenderTexture previousActive = RenderTexture.active;
+            RenderTexture previousCameraTarget = options.Camera.targetTexture;
+            var changedRenderers = new List<SkinnedMeshRenderer>();
+            try
+            {
+                if (options.KeepSkinnedMeshesUpdated)
+                {
+                    foreach (SkinnedMeshRenderer renderer in UnityEngine.Object.FindObjectsOfType<SkinnedMeshRenderer>())
+                    {
+                        if (!renderer.enabled || renderer.updateWhenOffscreen ||
+                            (options.Camera.cullingMask & (1 << renderer.gameObject.layer)) == 0)
+                            continue;
+                        renderer.updateWhenOffscreen = true;
+                        changedRenderers.Add(renderer);
+                    }
+                }
+
+                cameraTarget = RenderTexture.GetTemporary(options.Width, options.Height, 24, RenderTextureFormat.ARGB32);
+                if (!cameraTarget.IsCreated() && !cameraTarget.Create())
+                    throw new InvalidOperationException("无法分配相机纹理；请降低分辨率或释放显存。");
+                cameraTarget.filterMode = FilterMode.Bilinear;
+                options.Camera.targetTexture = cameraTarget;
+                options.Camera.Render();
+                options.Camera.targetTexture = previousCameraTarget;
+
+                if (options.Filter == CaptureFilter.None)
+                    Graphics.Blit(cameraTarget, target);
+                else
+                {
+                    Shader shader = Shader.Find("Hidden/CameraCaptureStudio/Filter");
+                    if (shader == null)
+                        throw new InvalidOperationException("找不到滤镜 Shader，请重新导入插件。");
+                    filterMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                    filterMaterial.SetFloat("_Preset", (int)options.Filter);
+                    Graphics.Blit(cameraTarget, target, filterMaterial);
+                }
+                if (!string.IsNullOrEmpty(options.Text)) DrawText(target, options);
+            }
+            finally
+            {
                 options.Camera.targetTexture = previousCameraTarget;
                 RenderTexture.active = previousActive;
+                foreach (SkinnedMeshRenderer renderer in changedRenderers)
+                    if (renderer != null) renderer.updateWhenOffscreen = false;
                 if (filterMaterial != null) UnityEngine.Object.DestroyImmediate(filterMaterial);
-                if (finishedTarget != null) RenderTexture.ReleaseTemporary(finishedTarget);
                 if (cameraTarget != null) RenderTexture.ReleaseTemporary(cameraTarget);
+            }
+        }
+
+        private static Texture2D CreateSmallPreview(RenderTexture source)
+        {
+            float scale = Mathf.Min(1f, Mathf.Min(640f / source.width, 360f / source.height));
+            int width = Mathf.Max(1, Mathf.RoundToInt(source.width * scale));
+            int height = Mathf.Max(1, Mathf.RoundToInt(source.height * scale));
+            RenderTexture temporary = RenderTexture.GetTemporary(width, height, 0, RenderTextureFormat.ARGB32);
+            RenderTexture previousActive = RenderTexture.active;
+            Texture2D image = null;
+            try
+            {
+                Graphics.Blit(source, temporary);
+                RenderTexture.active = temporary;
+                image = new Texture2D(width, height, TextureFormat.RGBA32, false);
+                image.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                image.Apply(false, false);
+                return image;
+            }
+            catch
+            {
+                if (image != null) UnityEngine.Object.DestroyImmediate(image);
+                throw;
+            }
+            finally
+            {
+                RenderTexture.active = previousActive;
+                RenderTexture.ReleaseTemporary(temporary);
             }
         }
 
@@ -137,7 +211,7 @@ namespace CameraCaptureStudio
         {
             if (options.Camera == null || EditorUtility.IsPersistent(options.Camera))
                 throw new ArgumentException("请选择场景中的相机。");
-            int max = SystemInfo.maxTextureSize;
+            int max = Mathf.Min(SystemInfo.maxTextureSize, 16384);
             if (options.Width < 1 || options.Height < 1 || options.Width > max || options.Height > max)
                 throw new ArgumentException($"分辨率必须在 1 到 {max} 像素之间。");
             if (!string.IsNullOrEmpty(options.Text) && options.Font == null)

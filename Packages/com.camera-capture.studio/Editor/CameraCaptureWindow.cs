@@ -13,13 +13,18 @@ namespace CameraCaptureStudio
             new Vector2Int(1920, 1080),
             new Vector2Int(3840, 2160),
             new Vector2Int(1080, 1080),
-            new Vector2Int(1080, 1920)
+            new Vector2Int(1080, 1920),
+            new Vector2Int(7680, 4320),
+            new Vector2Int(8192, 4320),
+            new Vector2Int(15360, 8640)
         };
 
         private static readonly string[] ResolutionNames =
         {
             "1920 × 1080 (Full HD)", "3840 × 2160 (4K)",
-            "1080 × 1080 (方形)", "1080 × 1920 (竖屏)", "自定义"
+            "1080 × 1080 (方形)", "1080 × 1920 (竖屏)", "自定义",
+            "7680 × 4320 (8K UHD)", "8192 × 4320 (8K DCI)",
+            "15360 × 8640 (16K UHD，需硬件支持)"
         };
 
         private static readonly string[] FilterNames =
@@ -47,9 +52,14 @@ namespace CameraCaptureStudio
         [SerializeField] private int margin = 40;
         [SerializeField] private string outputDirectory;
         [SerializeField] private string fileName = "capture";
+        [SerializeField] private bool livePreviewEnabled = true;
+        [SerializeField] private bool keepSkinnedMeshesUpdated = true;
 
         private Vector2 scroll;
         private Texture2D preview;
+        private RenderTexture livePreview;
+        private double nextPreviewTime;
+        private string previewError;
         private string lastSavedPath;
         private string error;
 
@@ -86,12 +96,15 @@ namespace CameraCaptureStudio
             }
             if (selectedCamera == null && Selection.activeGameObject != null)
                 selectedCamera = Selection.activeGameObject.GetComponent<Camera>();
+            EditorApplication.update += UpdateLivePreview;
         }
 
         private void OnDisable()
         {
+            EditorApplication.update -= UpdateLivePreview;
             if (preview != null)
                 DestroyImmediate(preview);
+            ReleaseLivePreview();
         }
 
         private void OnGUI()
@@ -103,6 +116,9 @@ namespace CameraCaptureStudio
 
             EditorGUILayout.LabelField("相机与画面", EditorStyles.boldLabel);
             selectedCamera = (Camera)EditorGUILayout.ObjectField("指定相机", selectedCamera, typeof(Camera), true);
+            keepSkinnedMeshesUpdated = EditorGUILayout.Toggle("兼容角色蒙皮", keepSkinnedMeshesUpdated);
+            if (selectedCamera != null && !selectedCamera.enabled)
+                EditorGUILayout.HelpBox("该相机组件已禁用。插件会手动渲染；角色蒙皮兼容选项可减少部分模型缺失。", MessageType.Info);
             using (new EditorGUI.DisabledScope(selectedCamera == null))
             {
                 if (GUILayout.Button("将相机对齐到当前场景视角")) AlignToSceneView();
@@ -113,7 +129,7 @@ namespace CameraCaptureStudio
                 {
                     width = selectedCamera.pixelWidth;
                     height = selectedCamera.pixelHeight;
-                    resolutionIndex = ResolutionNames.Length - 1;
+                    resolutionIndex = 4;
                 }
                 else
                     error = "请先选择有有效像素尺寸的场景相机。";
@@ -123,18 +139,42 @@ namespace CameraCaptureStudio
             if (nextResolution != resolutionIndex)
             {
                 resolutionIndex = nextResolution;
-                if (resolutionIndex < ResolutionPresets.Length)
+                if (resolutionIndex != 4)
                 {
-                    width = ResolutionPresets[resolutionIndex].x;
-                    height = ResolutionPresets[resolutionIndex].y;
+                    int presetIndex = resolutionIndex < 4 ? resolutionIndex : resolutionIndex - 1;
+                    width = ResolutionPresets[presetIndex].x;
+                    height = ResolutionPresets[presetIndex].y;
                 }
             }
-            if (resolutionIndex == ResolutionNames.Length - 1)
+            if (resolutionIndex == 4)
             {
                 width = EditorGUILayout.IntField("宽度 (px)", width);
                 height = EditorGUILayout.IntField("高度 (px)", height);
             }
             EditorGUILayout.LabelField($"输出尺寸：{width} × {height} px", EditorStyles.miniLabel);
+            int maxTextureSize = Mathf.Min(SystemInfo.maxTextureSize, 16384);
+            if (width > maxTextureSize || height > maxTextureSize)
+                EditorGUILayout.HelpBox($"当前设备的单张纹理最大边长为 {maxTextureSize} px；请降低尺寸。", MessageType.Warning);
+            else if (width >= 7680 || height >= 4320)
+                EditorGUILayout.HelpBox("8K 及更高分辨率需要较多显存和内存；实时预览会自动缩小，导出仍使用所选尺寸。", MessageType.Info);
+
+            EditorGUILayout.Space(8);
+            livePreviewEnabled = EditorGUILayout.Toggle("实时预览", livePreviewEnabled);
+            if (livePreviewEnabled)
+            {
+                EditorGUILayout.LabelField("相机实时画面（包含滤镜与嵌字）", EditorStyles.boldLabel);
+                if (livePreview != null)
+                {
+                    float previewWidth = Mathf.Max(1, position.width - 36);
+                    float previewHeight = Mathf.Min(320, previewWidth * livePreview.height / livePreview.width);
+                    Rect previewRect = GUILayoutUtility.GetRect(previewWidth, previewHeight);
+                    EditorGUI.DrawPreviewTexture(previewRect, livePreview, null, ScaleMode.ScaleToFit);
+                }
+                else
+                    EditorGUILayout.HelpBox("选择场景相机后将自动显示预览。", MessageType.Info);
+                if (!string.IsNullOrEmpty(previewError))
+                    EditorGUILayout.HelpBox(previewError, MessageType.Warning);
+            }
 
             EditorGUILayout.Space(10);
             EditorGUILayout.LabelField("后处理", EditorStyles.boldLabel);
@@ -229,7 +269,8 @@ namespace CameraCaptureStudio
                     Format = format,
                     JpegQuality = jpegQuality,
                     Directory = outputDirectory,
-                    FileName = fileName
+                    FileName = fileName,
+                    KeepSkinnedMeshesUpdated = keepSkinnedMeshesUpdated
                 };
                 string saved = CameraCaptureProcessor.Capture(options, out Texture2D newPreview);
                 if (preview != null) DestroyImmediate(preview);
@@ -242,6 +283,72 @@ namespace CameraCaptureStudio
                 error = exception.Message;
                 Debug.LogException(exception);
             }
+        }
+
+        private void UpdateLivePreview()
+        {
+            if (!livePreviewEnabled || selectedCamera == null)
+            {
+                if (livePreview != null)
+                {
+                    ReleaseLivePreview();
+                    Repaint();
+                }
+                return;
+            }
+            if (width < 1 || height < 1 || EditorApplication.isCompiling ||
+                EditorApplication.isUpdating || EditorApplication.timeSinceStartup < nextPreviewTime)
+                return;
+            nextPreviewTime = EditorApplication.timeSinceStartup + 0.25;
+            float scale = Mathf.Min(1f, Mathf.Min(640f / width, 360f / height));
+            int previewWidth = Mathf.Max(1, Mathf.RoundToInt(width * scale));
+            int previewHeight = Mathf.Max(1, Mathf.RoundToInt(height * scale));
+            if (livePreview == null || livePreview.width != previewWidth || livePreview.height != previewHeight)
+            {
+                ReleaseLivePreview();
+                livePreview = new RenderTexture(previewWidth, previewHeight, 0, RenderTextureFormat.ARGB32)
+                {
+                    hideFlags = HideFlags.HideAndDontSave
+                };
+                if (!livePreview.Create())
+                {
+                    ReleaseLivePreview();
+                    previewError = "无法分配实时预览纹理。";
+                    Repaint();
+                    return;
+                }
+            }
+            try
+            {
+                CameraCaptureProcessor.RenderPreview(new CaptureOptions
+                {
+                    Camera = selectedCamera,
+                    Width = width,
+                    Height = height,
+                    Filter = filter,
+                    Text = overlayText,
+                    Font = font,
+                    FontSize = fontSize,
+                    TextColor = textColor,
+                    Placement = placement,
+                    Margin = margin,
+                    KeepSkinnedMeshesUpdated = keepSkinnedMeshesUpdated
+                }, livePreview);
+                previewError = null;
+            }
+            catch (Exception exception)
+            {
+                previewError = exception.Message;
+            }
+            Repaint();
+        }
+
+        private void ReleaseLivePreview()
+        {
+            if (livePreview == null) return;
+            livePreview.Release();
+            DestroyImmediate(livePreview);
+            livePreview = null;
         }
     }
 }

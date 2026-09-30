@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import gzip
 import io
+import json
 import re
 import tarfile
 from pathlib import Path
@@ -15,7 +16,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE = ROOT / "Packages" / "com.camera-capture.studio"
-OUTPUT = ROOT / "dist" / "CameraCaptureStudio-1.0.0.unitypackage"
+VERSION = json.loads((SOURCE / "package.json").read_text(encoding="utf-8"))["version"]
+OUTPUT = ROOT / "dist" / f"CameraCaptureStudio-{VERSION}.unitypackage"
 ASSET_ROOT = "Assets/CameraCaptureStudio"
 ROOT_GUID = "4a285b1d2e814e498db9f093b7c1cc02"
 ROOT_META = (

@@ -14,3 +14,4 @@ UserSettings/
 *.suo
 *.user
 Captures/
+.validation/

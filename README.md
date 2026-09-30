@@ -18,7 +18,7 @@ https://github.com/dungezi/unity-camera-capture-studio.git?path=/Packages/com.ca
 
 ### 方法二：本地 `.unitypackage`
 
-1. 从仓库下载 [CameraCaptureStudio-1.0.0.unitypackage](dist/CameraCaptureStudio-1.0.0.unitypackage) 到本机。
+1. 从仓库下载 [CameraCaptureStudio-1.1.0.unitypackage](dist/CameraCaptureStudio-1.1.0.unitypackage) 到本机。
 2. 在 Unity 中选择 **Assets → Import Package → Custom Package…**，打开下载的文件。
 3. 保持导入项目全选，点击 **Import**。插件会安装到 `Assets/CameraCaptureStudio`，之后从顶栏 **工具 → 相机截图工作室** 打开。
 
@@ -31,10 +31,14 @@ https://github.com/dungezi/unity-camera-capture-studio.git?path=/Packages/com.ca
 1. 在 Unity 顶栏打开 **工具 → 相机截图工作室**，或 **Tools → Camera Capture Studio**。
 2. 选择场景中的相机。需要让它对准当前“场景”窗口时，点击 **将相机对齐到当前场景视角**；此操作支持 Unity 撤销，并同步透视/正交投影参数。
 3. 选择分辨率预设或填入自定义宽高。也可读取相机当前像素尺寸。
-4. 选择滤镜；如需嵌字，填写文字，选择字体、字号、颜色和九宫格位置。
+4. 窗口内的实时预览会显示当前相机、滤镜和嵌字。选择滤镜；如需嵌字，填写文字，选择字体、字号、颜色和九宫格位置。
 5. 填写保存文件夹与文件名，选择 PNG 或 JPG，点击 **截图并保存**。窗口下方显示最后一张图片的预览与保存位置。同名文件会自动追加 `_2`、`_3` 等序号。
 
 默认保存到 Unity 项目根目录下的 `Captures`。当前包内的 `BRUSHSCI.TTF` 是用户提供的预设字体；字体字段也接受 Unity 已导入的其他 TTF/OTF 字体。所选字体必须包含待嵌入的字符，例如中文内容需要支持中文字形的字体。原文件夹中的 `BRUSHSCI SDF.asset` 是 TextMesh Pro 字体资源；本插件使用 TTF 原字体进行文字生成，因此不依赖 TMP。
+
+分辨率菜单提供 8K UHD（7680 × 4320）、8K DCI（8192 × 4320）和 16K UHD（15360 × 8640）。也可以输入自定义尺寸。导出宽高必须同时不超过当前设备的 `SystemInfo.maxTextureSize` 和 Unity 的 16384 像素上限；高分辨率还需要足够显存和内存。实时预览固定使用较小尺寸，实际导出仍采用设定的分辨率。
+
+若角色在相机实时画面中可见、导出却缺少身体或服饰，可开启默认勾选的 **兼容角色蒙皮**。它只在预览/截图渲染期间临时让相机可见层中的 `SkinnedMeshRenderer` 保持离屏更新，随后恢复原值，不保存角色或场景改动。该选项可能增加实时预览的渲染负担。
 
 ## 滤镜预设
 
