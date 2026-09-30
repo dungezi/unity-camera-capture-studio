@@ -42,6 +42,7 @@ namespace CameraCaptureStudio
         [SerializeField] private int width = 1920;
         [SerializeField] private int height = 1080;
         [SerializeField] private CaptureFormat format = CaptureFormat.Png;
+        [SerializeField] private bool preserveTransparency;
         [SerializeField] private int jpegQuality = 90;
         [SerializeField] private CaptureFilter filter;
         [SerializeField] private string overlayText = "";
@@ -53,7 +54,7 @@ namespace CameraCaptureStudio
         [SerializeField] private string outputDirectory;
         [SerializeField] private string fileName = "capture";
         [SerializeField] private bool livePreviewEnabled = true;
-        [SerializeField] private bool keepSkinnedMeshesUpdated = true;
+        [SerializeField] private bool keepSkinnedMeshesUpdated;
 
         private Vector2 scroll;
         private Texture2D preview;
@@ -63,8 +64,7 @@ namespace CameraCaptureStudio
         private string lastSavedPath;
         private string error;
 
-        [MenuItem("工具/相机截图工作室")]
-        [MenuItem("Tools/Camera Capture Studio")]
+        [MenuItem("Window/相机截图工作室")]
         private static void Open()
         {
             CameraCaptureWindow window = GetWindow<CameraCaptureWindow>();
@@ -116,9 +116,9 @@ namespace CameraCaptureStudio
 
             EditorGUILayout.LabelField("相机与画面", EditorStyles.boldLabel);
             selectedCamera = (Camera)EditorGUILayout.ObjectField("指定相机", selectedCamera, typeof(Camera), true);
-            keepSkinnedMeshesUpdated = EditorGUILayout.Toggle("兼容角色蒙皮", keepSkinnedMeshesUpdated);
+            keepSkinnedMeshesUpdated = EditorGUILayout.Toggle("离屏蒙皮兼容（可选）", keepSkinnedMeshesUpdated);
             if (selectedCamera != null && !selectedCamera.enabled)
-                EditorGUILayout.HelpBox("该相机组件已禁用。插件会手动渲染；角色蒙皮兼容选项可减少部分模型缺失。", MessageType.Info);
+                EditorGUILayout.HelpBox("该相机组件已禁用。插件会手动渲染；如确有蒙皮剔除，可尝试离屏蒙皮兼容。", MessageType.Info);
             using (new EditorGUI.DisabledScope(selectedCamera == null))
             {
                 if (GUILayout.Button("将相机对齐到当前场景视角")) AlignToSceneView();
@@ -192,6 +192,12 @@ namespace CameraCaptureStudio
             EditorGUILayout.Space(10);
             EditorGUILayout.LabelField("导出", EditorStyles.boldLabel);
             format = (CaptureFormat)EditorGUILayout.Popup("图片格式", (int)format, new[] { "PNG", "JPG" });
+            if (format == CaptureFormat.Png)
+            {
+                preserveTransparency = EditorGUILayout.Toggle("保留透明度", preserveTransparency);
+                if (preserveTransparency)
+                    EditorGUILayout.HelpBox("部分角色材质会写入半透明 Alpha，使导出图在图片查看器中显得缺失；关闭此选项可让结果更接近 Unity 相机画面。", MessageType.Info);
+            }
             if (format == CaptureFormat.Jpg)
                 jpegQuality = EditorGUILayout.IntSlider("JPG 质量", jpegQuality, 1, 100);
             outputDirectory = EditorGUILayout.TextField("保存文件夹", outputDirectory);
@@ -270,7 +276,8 @@ namespace CameraCaptureStudio
                     JpegQuality = jpegQuality,
                     Directory = outputDirectory,
                     FileName = fileName,
-                    KeepSkinnedMeshesUpdated = keepSkinnedMeshesUpdated
+                    KeepSkinnedMeshesUpdated = keepSkinnedMeshesUpdated,
+                    PreserveTransparency = format == CaptureFormat.Png && preserveTransparency
                 };
                 string saved = CameraCaptureProcessor.Capture(options, out Texture2D newPreview);
                 if (preview != null) DestroyImmediate(preview);
@@ -332,7 +339,8 @@ namespace CameraCaptureStudio
                     TextColor = textColor,
                     Placement = placement,
                     Margin = margin,
-                    KeepSkinnedMeshesUpdated = keepSkinnedMeshesUpdated
+                    KeepSkinnedMeshesUpdated = keepSkinnedMeshesUpdated,
+                    PreserveTransparency = format == CaptureFormat.Png && preserveTransparency
                 }, livePreview);
                 previewError = null;
             }

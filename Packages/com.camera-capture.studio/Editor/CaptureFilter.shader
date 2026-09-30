@@ -1,6 +1,6 @@
 Shader "Hidden/CameraCaptureStudio/Filter"
 {
-    Properties { _MainTex ("Source", 2D) = "white" {} _Preset ("Preset", Float) = 0 }
+    Properties { _MainTex ("Source", 2D) = "white" {} _Preset ("Preset", Float) = 0 _PreserveAlpha ("Preserve Alpha", Float) = 0 }
     SubShader
     {
         Tags { "RenderType"="Opaque" "Queue"="Overlay" }
@@ -15,6 +15,7 @@ Shader "Hidden/CameraCaptureStudio/Filter"
             sampler2D _MainTex;
             float4 _MainTex_TexelSize;
             float _Preset;
+            float _PreserveAlpha;
 
             float3 Contrast(float3 color, float strength)
             {
@@ -33,7 +34,11 @@ Shader "Hidden/CameraCaptureStudio/Filter"
                 float3 color = source.rgb;
                 float luma = dot(color, float3(0.2126, 0.7152, 0.0722));
 
-                if (_Preset < 1.5) // Black & White
+                if (_Preset < 0.5) // Original
+                {
+                    return float4(color, lerp(1.0, source.a, _PreserveAlpha));
+                }
+                else if (_Preset < 1.5) // Black & White
                 {
                     color = Contrast(luma.xxx, 1.15);
                 }
@@ -72,7 +77,7 @@ Shader "Hidden/CameraCaptureStudio/Filter"
                                           0.349, 0.686, 0.168,
                                           0.272, 0.534, 0.131), color);
                 }
-                return float4(saturate(color), source.a);
+                return float4(saturate(color), lerp(1.0, source.a, _PreserveAlpha));
             }
             ENDCG
         }

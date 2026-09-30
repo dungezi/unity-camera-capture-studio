@@ -49,6 +49,7 @@ namespace CameraCaptureStudio
         internal string Directory;
         internal string FileName;
         internal bool KeepSkinnedMeshesUpdated;
+        internal bool PreserveTransparency;
     }
 
     internal static class CameraCaptureProcessor
@@ -120,7 +121,8 @@ namespace CameraCaptureStudio
                 TextColor = options.TextColor,
                 Placement = options.Placement,
                 Margin = Mathf.RoundToInt(options.Margin * scale),
-                KeepSkinnedMeshesUpdated = options.KeepSkinnedMeshesUpdated
+                KeepSkinnedMeshesUpdated = options.KeepSkinnedMeshesUpdated,
+                PreserveTransparency = options.PreserveTransparency
             };
             RenderFrame(scaled, target);
         }
@@ -154,17 +156,13 @@ namespace CameraCaptureStudio
                 options.Camera.Render();
                 options.Camera.targetTexture = previousCameraTarget;
 
-                if (options.Filter == CaptureFilter.None)
-                    Graphics.Blit(cameraTarget, target);
-                else
-                {
-                    Shader shader = Shader.Find("Hidden/CameraCaptureStudio/Filter");
-                    if (shader == null)
-                        throw new InvalidOperationException("找不到滤镜 Shader，请重新导入插件。");
-                    filterMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-                    filterMaterial.SetFloat("_Preset", (int)options.Filter);
-                    Graphics.Blit(cameraTarget, target, filterMaterial);
-                }
+                Shader shader = Shader.Find("Hidden/CameraCaptureStudio/Filter");
+                if (shader == null)
+                    throw new InvalidOperationException("找不到滤镜 Shader，请重新导入插件。");
+                filterMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+                filterMaterial.SetFloat("_Preset", (int)options.Filter);
+                filterMaterial.SetFloat("_PreserveAlpha", options.PreserveTransparency ? 1f : 0f);
+                Graphics.Blit(cameraTarget, target, filterMaterial);
                 if (!string.IsNullOrEmpty(options.Text)) DrawText(target, options);
             }
             finally

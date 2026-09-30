@@ -18,9 +18,9 @@ https://github.com/dungezi/unity-camera-capture-studio.git?path=/Packages/com.ca
 
 ### 方法二：本地 `.unitypackage`
 
-1. 从仓库下载 [CameraCaptureStudio-1.1.0.unitypackage](dist/CameraCaptureStudio-1.1.0.unitypackage) 到本机。
+1. 从仓库下载 [CameraCaptureStudio-1.1.1.unitypackage](dist/CameraCaptureStudio-1.1.1.unitypackage) 到本机。
 2. 在 Unity 中选择 **Assets → Import Package → Custom Package…**，打开下载的文件。
-3. 保持导入项目全选，点击 **Import**。插件会安装到 `Assets/CameraCaptureStudio`，之后从顶栏 **工具 → 相机截图工作室** 打开。
+3. 保持导入项目全选，点击 **Import**。插件会安装到 `Assets/CameraCaptureStudio`，之后从顶栏 **Window → 相机截图工作室** 打开。
 
 此文件包含脚本、Shader、预设字体和对应的 Unity `.meta`，不需要联网安装。维护者在修改插件后可运行 `python tools/build_unitypackage.py` 重新生成，并用 `python tools/build_unitypackage.py --check` 核对发布文件。[Unity 官方本地资源包导入说明](https://docs.unity3d.com/2022.3/Documentation/Manual/AssetPackagesImport.html)。
 
@@ -28,7 +28,7 @@ https://github.com/dungezi/unity-camera-capture-studio.git?path=/Packages/com.ca
 
 ## 使用
 
-1. 在 Unity 顶栏打开 **工具 → 相机截图工作室**，或 **Tools → Camera Capture Studio**。
+1. 在 Unity 顶栏打开 **Window → 相机截图工作室**。
 2. 选择场景中的相机。需要让它对准当前“场景”窗口时，点击 **将相机对齐到当前场景视角**；此操作支持 Unity 撤销，并同步透视/正交投影参数。
 3. 选择分辨率预设或填入自定义宽高。也可读取相机当前像素尺寸。
 4. 窗口内的实时预览会显示当前相机、滤镜和嵌字。选择滤镜；如需嵌字，填写文字，选择字体、字号、颜色和九宫格位置。
@@ -38,7 +38,9 @@ https://github.com/dungezi/unity-camera-capture-studio.git?path=/Packages/com.ca
 
 分辨率菜单提供 8K UHD（7680 × 4320）、8K DCI（8192 × 4320）和 16K UHD（15360 × 8640）。也可以输入自定义尺寸。导出宽高必须同时不超过当前设备的 `SystemInfo.maxTextureSize` 和 Unity 的 16384 像素上限；高分辨率还需要足够显存和内存。实时预览固定使用较小尺寸，实际导出仍采用设定的分辨率。
 
-若角色在相机实时画面中可见、导出却缺少身体或服饰，可开启默认勾选的 **兼容角色蒙皮**。它只在预览/截图渲染期间临时让相机可见层中的 `SkinnedMeshRenderer` 保持离屏更新，随后恢复原值，不保存角色或场景改动。该选项可能增加实时预览的渲染负担。
+若确有角色蒙皮因离屏剔除而缺失，可尝试开启 **离屏蒙皮兼容（可选）**。它只在预览/截图渲染期间临时让相机可见层中的 `SkinnedMeshRenderer` 保持离屏更新，随后恢复原值，不保存角色或场景改动。该选项可能增加实时预览的渲染负担。
+
+PNG 默认将最终透明度设为不透明，使导出的可见颜色与相机画面一致。某些角色材质会写入较低的 Alpha，若保留这些 Alpha，图片查看器会将角色区域显示得很淡。确实需要透明通道时，可在窗口的“导出”区域勾选 **保留透明度**。
 
 ## 滤镜预设
 
