@@ -1,0 +1,10 @@
+{
+  "name": "com.camera-capture.studio",
+  "version": "1.0.0",
+  "displayName": "Camera Capture Studio",
+  "description": "Capture a Unity camera at a chosen resolution, add a filter and text, and save PNG or JPG from an Editor window.",
+  "unity": "2022.3",
+  "author": {
+    "name": "Camera Capture Studio contributors"
+  }
+}

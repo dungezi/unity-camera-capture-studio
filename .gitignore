@@ -1,0 +1,16 @@
+.DS_Store
+Thumbs.db
+Library/
+Temp/
+Obj/
+Build/
+Builds/
+Logs/
+UserSettings/
+.vs/
+.idea/
+*.csproj
+*.sln
+*.suo
+*.user
+Captures/
