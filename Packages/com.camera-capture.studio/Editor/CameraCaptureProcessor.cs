@@ -14,7 +14,9 @@ namespace CameraCaptureStudio
         TealAndOrange,
         WarmSunlight,
         CoolMood,
-        Sepia
+        Sepia,
+        HighContrastBlackAndWhite,
+        BackgroundBlur
     }
 
     internal enum TextPlacement
@@ -38,6 +40,8 @@ namespace CameraCaptureStudio
         internal int Width;
         internal int Height;
         internal CaptureFilter Filter;
+        internal bool PreserveRed = true;
+        internal float BlurStrength = 40f;
         internal string Text;
         internal Font Font;
         internal int FontSize;
@@ -115,6 +119,8 @@ namespace CameraCaptureStudio
                 Width = target.width,
                 Height = target.height,
                 Filter = options.Filter,
+                PreserveRed = options.PreserveRed,
+                BlurStrength = options.BlurStrength,
                 Text = options.Font == null ? null : options.Text,
                 Font = options.Font,
                 FontSize = Mathf.Max(1, Mathf.RoundToInt(options.FontSize * scale)),
@@ -130,7 +136,6 @@ namespace CameraCaptureStudio
         private static void RenderFrame(CaptureOptions options, RenderTexture target)
         {
             RenderTexture cameraTarget = null;
-            Material filterMaterial = null;
             RenderTexture previousActive = RenderTexture.active;
             RenderTexture previousCameraTarget = options.Camera.targetTexture;
             var changedRenderers = new List<SkinnedMeshRenderer>();
@@ -152,17 +157,12 @@ namespace CameraCaptureStudio
                 if (!cameraTarget.IsCreated() && !cameraTarget.Create())
                     throw new InvalidOperationException("无法分配相机纹理；请降低分辨率或释放显存。");
                 cameraTarget.filterMode = FilterMode.Bilinear;
+                cameraTarget.wrapMode = TextureWrapMode.Clamp;
                 options.Camera.targetTexture = cameraTarget;
                 options.Camera.Render();
                 options.Camera.targetTexture = previousCameraTarget;
 
-                Shader shader = Shader.Find("Hidden/CameraCaptureStudio/Filter");
-                if (shader == null)
-                    throw new InvalidOperationException("找不到滤镜 Shader，请重新导入插件。");
-                filterMaterial = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
-                filterMaterial.SetFloat("_Preset", (int)options.Filter);
-                filterMaterial.SetFloat("_PreserveAlpha", options.PreserveTransparency ? 1f : 0f);
-                Graphics.Blit(cameraTarget, target, filterMaterial);
+                ApplyFilter(cameraTarget, target, options);
                 if (!string.IsNullOrEmpty(options.Text)) DrawText(target, options);
             }
             finally
@@ -171,8 +171,68 @@ namespace CameraCaptureStudio
                 RenderTexture.active = previousActive;
                 foreach (SkinnedMeshRenderer renderer in changedRenderers)
                     if (renderer != null) renderer.updateWhenOffscreen = false;
-                if (filterMaterial != null) UnityEngine.Object.DestroyImmediate(filterMaterial);
                 if (cameraTarget != null) RenderTexture.ReleaseTemporary(cameraTarget);
+            }
+        }
+
+        internal static void ApplyFilter(RenderTexture source, RenderTexture target, CaptureOptions options)
+        {
+            Shader shader = Shader.Find("Hidden/CameraCaptureStudio/Filter");
+            if (shader == null || !shader.isSupported)
+                throw new InvalidOperationException("找不到可用的滤镜 Shader，请重新导入插件。");
+            var material = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
+            RenderTexture horizontal = null;
+            RenderTexture vertical = null;
+            RenderTexture previousActive = RenderTexture.active;
+            try
+            {
+                material.SetFloat("_Preset", (int)options.Filter);
+                material.SetFloat("_PreserveAlpha", options.PreserveTransparency ? 1f : 0f);
+                material.SetFloat("_PreserveRed", options.PreserveRed ? 1f : 0f);
+                float strength = Mathf.Clamp(options.BlurStrength, 0f, 100f);
+                if (options.Filter != CaptureFilter.BackgroundBlur || strength <= 0f)
+                {
+                    Graphics.Blit(source, target, material, 0);
+                    return;
+                }
+
+                // Sigma is relative to the short edge, so preview and export share the same framing.
+                float sigma = strength * 0.00025f * Mathf.Min(source.width, source.height);
+                int downsample = Mathf.Max(1, Mathf.FloorToInt(sigma / 2f));
+                int blurWidth = Mathf.Max(1, Mathf.CeilToInt((float)source.width / downsample));
+                int blurHeight = Mathf.Max(1, Mathf.CeilToInt((float)source.height / downsample));
+                // Preserve faint transparent colors across repeated premultiplied passes.
+                RenderTextureFormat blurFormat = options.PreserveTransparency &&
+                    SystemInfo.SupportsRenderTextureFormat(RenderTextureFormat.ARGBHalf)
+                    ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32;
+                horizontal = RenderTexture.GetTemporary(blurWidth, blurHeight, 0, blurFormat);
+                vertical = RenderTexture.GetTemporary(blurWidth, blurHeight, 0, blurFormat);
+                horizontal.filterMode = vertical.filterMode = FilterMode.Bilinear;
+                horizontal.wrapMode = vertical.wrapMode = TextureWrapMode.Clamp;
+                if ((!horizontal.IsCreated() && !horizontal.Create()) ||
+                    (!vertical.IsCreated() && !vertical.Create()))
+                    throw new InvalidOperationException("无法分配模糊纹理；请降低分辨率或释放显存。");
+
+                // Three separable Gaussian iterations; the nine-tap kernel has sigma about 1.689.
+                float step = sigma / (1.689f * Mathf.Sqrt(3f));
+                for (int iteration = 0; iteration < 3; iteration++)
+                {
+                    material.SetFloat("_PremultiplyInput", iteration == 0 && options.PreserveTransparency ? 1f : 0f);
+                    material.SetVector("_BlurStep", new Vector4(step / source.width, 0f, 0f, 0f));
+                    Graphics.Blit(iteration == 0 ? source : vertical, horizontal, material, 1);
+                    material.SetFloat("_PremultiplyInput", 0f);
+                    material.SetVector("_BlurStep", new Vector4(0f, step / source.height, 0f, 0f));
+                    Graphics.Blit(horizontal, vertical, material, 1);
+                }
+                material.SetFloat("_Unpremultiply", options.PreserveTransparency ? 1f : 0f);
+                Graphics.Blit(vertical, target, material, 0);
+            }
+            finally
+            {
+                RenderTexture.active = previousActive;
+                if (horizontal != null) RenderTexture.ReleaseTemporary(horizontal);
+                if (vertical != null) RenderTexture.ReleaseTemporary(vertical);
+                UnityEngine.Object.DestroyImmediate(material);
             }
         }
 

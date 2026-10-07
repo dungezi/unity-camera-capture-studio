@@ -29,7 +29,8 @@ namespace CameraCaptureStudio
 
         private static readonly string[] FilterNames =
         {
-            "无", "黑白", "复古胶片", "青橙电影", "暖阳", "冷调", "棕褐老照片"
+            "无", "黑白", "复古胶片", "青橙电影", "暖阳", "冷调", "棕褐老照片",
+            "高对比黑白（红色点缀）", "背景模糊"
         };
 
         private static readonly string[] PlacementNames =
@@ -45,6 +46,8 @@ namespace CameraCaptureStudio
         [SerializeField] private bool preserveTransparency;
         [SerializeField] private int jpegQuality = 90;
         [SerializeField] private CaptureFilter filter;
+        [SerializeField] private bool preserveRed = true;
+        [SerializeField] private float blurStrength = 40f;
         [SerializeField] private string overlayText = "";
         [SerializeField] private Font font;
         [SerializeField] private int fontSize = 64;
@@ -179,6 +182,13 @@ namespace CameraCaptureStudio
             EditorGUILayout.Space(10);
             EditorGUILayout.LabelField("后处理", EditorStyles.boldLabel);
             filter = (CaptureFilter)EditorGUILayout.Popup("滤镜预设", (int)filter, FilterNames);
+            if (filter == CaptureFilter.HighContrastBlackAndWhite)
+                preserveRed = EditorGUILayout.Toggle("保留红色点缀", preserveRed);
+            if (filter == CaptureFilter.BackgroundBlur)
+            {
+                blurStrength = EditorGUILayout.Slider("模糊程度", blurStrength, 0f, 100f);
+                EditorGUILayout.HelpBox("0 为原图。先模糊相机画面，再叠加嵌字，文字保持清晰。", MessageType.Info);
+            }
             EditorGUILayout.LabelField("嵌字内容");
             overlayText = EditorGUILayout.TextArea(overlayText, GUILayout.MinHeight(64));
             font = (Font)EditorGUILayout.ObjectField("字体", font, typeof(Font), false);
@@ -266,6 +276,8 @@ namespace CameraCaptureStudio
                     Width = width,
                     Height = height,
                     Filter = filter,
+                    PreserveRed = preserveRed,
+                    BlurStrength = blurStrength,
                     Text = overlayText,
                     Font = font,
                     FontSize = fontSize,
@@ -333,6 +345,8 @@ namespace CameraCaptureStudio
                     Width = width,
                     Height = height,
                     Filter = filter,
+                    PreserveRed = preserveRed,
+                    BlurStrength = blurStrength,
                     Text = overlayText,
                     Font = font,
                     FontSize = fontSize,
