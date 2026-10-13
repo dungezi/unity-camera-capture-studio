@@ -265,9 +265,9 @@ namespace CameraCaptureStudio
             options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "A\r" }, new CaptureTextSegment { Text = "\nB", Font = sans } };
             layout = CaptureTextRenderer.BuildLayout(options);
             Check(layout.LineCount == 2 && layout.Runs[1].Glyphs[0].Line == 1 && layout.Runs[1].Glyphs[0].X == 0, "Newline split across segments failed");
-            var unicode = new CaptureTextSegment { Text = "A\U0001F600e\u0301中", Font = sans, FontSize = 72 };
+            var unicode = new CaptureTextSegment { Text = "A\U0001F600e\u0301中", Font = sans, FontSize = 72, UseCustomPosition = true, Placement = TextPlacement.TopRight, OffsetX = 20, OffsetY = -10 };
             CaptureTextSegment right = unicode.Split(2);
-            Check(unicode.Text == "A\U0001F600" && right.Text == "e\u0301中" && right.Font == sans && right.FontSize == 72, "Split damaged a Unicode character or font assignment");
+            Check(unicode.Text == "A\U0001F600" && right.Text == "e\u0301中" && right.Font == sans && right.FontSize == 72 && right.UseCustomPosition && right.Placement == TextPlacement.TopRight && right.OffsetX == 20 && right.OffsetY == -10, "Split damaged a Unicode character or font assignment");
             options.Font = null;
             options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "TEST", Font = script } };
             CaptureTextRenderer.Validate(options);
@@ -366,12 +366,12 @@ namespace CameraCaptureStudio
                 switchMode.Invoke(window, new object[] { true });
                 var segments = (List<CaptureTextSegment>)segmentsField.GetValue(window);
                 Check(segments.Count == 1 && segments[0].Text == "HELLO WORLD", "Legacy text did not migrate");
-                segments.Add(segments[0].Split(5)); segments[1].Font = sans; segments[1].FontSize = 72;
+                segments.Add(segments[0].Split(5)); segments[1].Font = sans; segments[1].FontSize = 72; segments[1].UseCustomPosition = true; segments[1].Placement = TextPlacement.TopRight; segments[1].OffsetX = -20; segments[1].OffsetY = 10;
                 switchMode.Invoke(window, new object[] { false }); switchMode.Invoke(window, new object[] { true });
-                Check(segments.Count == 2 && segments[1].Font == sans && segments[1].FontSize == 72, "Mode switch lost font assignments");
+                Check(segments.Count == 2 && segments[1].Font == sans && segments[1].FontSize == 72 && segments[1].UseCustomPosition && segments[1].OffsetX == -20, "Mode switch lost font assignments");
                 EditorJsonUtility.FromJsonOverwrite(EditorJsonUtility.ToJson(window), restored);
                 var restoredSegments = (List<CaptureTextSegment>)segmentsField.GetValue(restored);
-                Check(restoredSegments.Count == 2 && restoredSegments[1].Font == sans && restoredSegments[1].FontSize == 72 && CaptureTextSegment.Join(restoredSegments) == "HELLO WORLD", "Window serialization lost segment text/fonts");
+                Check(restoredSegments.Count == 2 && restoredSegments[1].Font == sans && restoredSegments[1].FontSize == 72 && restoredSegments[1].UseCustomPosition && restoredSegments[1].Placement == TextPlacement.TopRight && restoredSegments[1].OffsetX == -20 && restoredSegments[1].OffsetY == 10 && CaptureTextSegment.Join(restoredSegments) == "HELLO WORLD", "Window serialization lost segment text/fonts");
                 switchMode.Invoke(window, new object[] { false }); textField.SetValue(window, "NEW"); switchMode.Invoke(window, new object[] { true });
                 segments = (List<CaptureTextSegment>)segmentsField.GetValue(window);
                 Check(segments.Count == 1 && segments[0].Text == "NEW", "Mode switch restored stale text after an edit");
@@ -431,6 +431,94 @@ namespace CameraCaptureStudio
             }
         }
 
+        private static RectInt InkBounds(Texture2D image)
+        {
+            Color32[] pixels = image.GetPixels32();
+            int minX = image.width, minY = image.height, maxX = -1, maxY = -1;
+            for (int y = 0; y < image.height; y++) for (int x = 0; x < image.width; x++)
+                if (pixels[y * image.width + x].r > 40)
+                { minX = Math.Min(minX, x); minY = Math.Min(minY, y); maxX = Math.Max(maxX, x); maxY = Math.Max(maxY, y); }
+            return maxX < 0 ? new RectInt() : new RectInt(minX, minY, maxX - minX + 1, maxY - minY + 1);
+        }
+
+        private static void SegmentPositionChecks()
+        {
+            Font font = AssetDatabase.LoadAssetAtPath<Font>("Assets/CameraCaptureStudio/Fonts/BRUSHSCI.TTF");
+            var first = new CaptureTextSegment { Text = "BASE", Font = font, UseCustomPosition = true, Placement = TextPlacement.Center };
+            var options = new CaptureOptions { FontSize = 48, TextColor = Color.white, Margin = 40,
+                Placement = TextPlacement.Center, Width = 640, Height = 360, TextSegments = new List<CaptureTextSegment> { first } };
+            var go = new GameObject("PositionCamera") { hideFlags = HideFlags.HideAndDontSave };
+            Camera camera = go.AddComponent<Camera>(); camera.enabled = false; camera.cullingMask = 0;
+            camera.clearFlags = CameraClearFlags.SolidColor; camera.backgroundColor = Color.black;
+            options.Camera = camera;
+            var target = RenderTexture.GetTemporary(640, 360, 0);
+            RenderTexture previous = RenderTexture.active;
+            Texture2D original = null, shifted = null, combined = null, scaled = null, direct = null;
+            try
+            {
+                // Exercise every grid location with only independently positioned text.
+                for (int placement = 0; placement < 9; placement++)
+                {
+                    first.Placement = (TextPlacement)placement;
+                    CameraCaptureProcessor.RenderPreview(options, target);
+                    Texture2D image = Read(target);
+                    try
+                    {
+                        RectInt bounds = InkBounds(image); int col = placement % 3, row = placement / 3;
+                        bool horizontal = col == 0 ? bounds.xMax < 320 : col == 2 ? bounds.xMin > 320 : Mathf.Abs(bounds.center.x - 320) < 6;
+                        bool vertical = row == 0 ? bounds.yMin > 180 : row == 2 ? bounds.yMax < 180 : Mathf.Abs(bounds.center.y - 180) < 6;
+                        Check(bounds.width > 0 && horizontal && vertical, "Independent grid position failed: " + placement);
+                    }
+                    finally { UnityEngine.Object.DestroyImmediate(image); }
+                }
+                first.Placement = TextPlacement.Center;
+                CameraCaptureProcessor.RenderPreview(options, target); original = Read(target);
+                first.OffsetX = 17; first.OffsetY = -11;
+                CameraCaptureProcessor.RenderPreview(options, target); shifted = Read(target);
+                RectInt originalBounds = InkBounds(original), shiftedBounds = InkBounds(shifted);
+                Check(shiftedBounds.xMin == originalBounds.xMin + 17 && shiftedBounds.yMin == originalBounds.yMin - 11,
+                    "Pixel offset direction/amount is incorrect");
+                first.OffsetX = first.OffsetY = 0; first.UseCustomPosition = false;
+                float inlineWidth = CaptureTextRenderer.BuildLayout(options).Bounds.width;
+                var corner = new CaptureTextSegment { Text = "CORNER", Font = font, FontSize = 32,
+                    UseCustomPosition = true, Placement = TextPlacement.TopRight, OffsetX = -20, OffsetY = -12 };
+                options.TextSegments.Add(corner);
+                var layout = CaptureTextRenderer.BuildLayout(options);
+                Check(layout.Runs.Count == 2 && layout.Bounds.width == inlineWidth, "Independent text changed inline spacing");
+                CameraCaptureProcessor.RenderPreview(options, target); combined = Read(target);
+                Color32[] a = original.GetPixels32(), b = combined.GetPixels32(); bool unchanged = true;
+                for (int y = 100; y < 240 && unchanged; y++) for (int x = 160; x < 480; x++)
+                    if (!a[y * 640 + x].Equals(b[y * 640 + x])) { unchanged = false; break; }
+                Check(unchanged && Difference(original, combined) > 0.001f, "Moving a separate segment affected existing text or was not drawn");
+                List<CaptureTextSegment> half = CaptureTextRenderer.ScaleSegments(options.TextSegments, 0.5f);
+                Check(half[1].UseCustomPosition && half[1].Placement == TextPlacement.TopRight && half[1].OffsetX == -10 && half[1].OffsetY == -6
+                    && corner.OffsetX == -20 && corner.OffsetY == -12, "Preview scaling changed position settings");
+                options.Width = 1280; options.Height = 720;
+                CameraCaptureProcessor.RenderPreview(options, target); scaled = Read(target);
+                options.Width = 640; options.Height = 360; options.FontSize = 24; options.Margin = 20; options.TextSegments = half;
+                CameraCaptureProcessor.RenderPreview(options, target); direct = Read(target);
+                Check(Difference(scaled, direct) < 0.001f, "Position offsets do not scale with preview resolution");
+                options.FontSize = 48; options.Margin = 40; options.TextSegments = new List<CaptureTextSegment> { first, corner };
+                options.Directory = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Results"); options.FileName = "segment-position-export";
+                foreach (CaptureFormat format in new[] { CaptureFormat.Png, CaptureFormat.Jpg })
+                {
+                    options.Format = format; options.JpegQuality = 95;
+                    string saved = CameraCaptureProcessor.Capture(options, out Texture2D thumbnail);
+                    UnityEngine.Object.DestroyImmediate(thumbnail);
+                    var image = new Texture2D(2, 2);
+                    try { Check(image.LoadImage(File.ReadAllBytes(saved)) && Difference(combined, image) < 0.015f, "Position export differs: " + format); }
+                    finally { UnityEngine.Object.DestroyImmediate(image); }
+                }
+                Debug.Log("SEGMENT_POSITION_SMOKE_PASS");
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                foreach (Texture2D image in new[] { original, shifted, combined, scaled, direct }) if (image != null) UnityEngine.Object.DestroyImmediate(image);
+                RenderTexture.ReleaseTemporary(target); UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         public static void Run()
         {
             try
@@ -443,6 +531,7 @@ namespace CameraCaptureStudio
                 CameraChecks();
                 MixedFontChecks();
                 SegmentSizeChecks();
+                SegmentPositionChecks();
                 Debug.Log("FILTER_SMOKE_PASS checks=" + checks);
                 EditorApplication.Exit(0);
             }

@@ -13,6 +13,10 @@ namespace CameraCaptureStudio
         public Font Font;
         public int FontSize; // 0 inherits the global size.
         public int SplitAfter = 1;
+        public bool UseCustomPosition;
+        public TextPlacement Placement = TextPlacement.BottomRight;
+        public int OffsetX;
+        public int OffsetY;
 
         internal CaptureTextSegment Split(int characters)
         {
@@ -20,7 +24,11 @@ namespace CameraCaptureStudio
             if (characters < 1 || characters >= starts.Length)
                 throw new ArgumentOutOfRangeException(nameof(characters));
             int offset = starts[characters];
-            var remainder = new CaptureTextSegment { Text = Text.Substring(offset), Font = Font, FontSize = FontSize };
+            var remainder = new CaptureTextSegment
+            {
+                Text = Text.Substring(offset), Font = Font, FontSize = FontSize,
+                UseCustomPosition = UseCustomPosition, Placement = Placement, OffsetX = OffsetX, OffsetY = OffsetY
+            };
             Text = Text.Substring(0, offset);
             return remainder;
         }
@@ -48,6 +56,11 @@ namespace CameraCaptureStudio
         {
             internal Font Font;
             internal int FontSize;
+            internal bool UseCustomPosition;
+            internal TextPlacement Placement;
+            internal Vector2 Offset;
+            internal Rect Bounds;
+            internal float LineHeight;
             internal readonly List<Glyph> Glyphs = new List<Glyph>();
         }
 
@@ -97,7 +110,9 @@ namespace CameraCaptureStudio
                 result.Add(segment == null ? null : new CaptureTextSegment
                 {
                     Text = segment.Text, Font = segment.Font, SplitAfter = segment.SplitAfter,
-                    FontSize = segment.FontSize > 0 ? Mathf.Max(1, Mathf.RoundToInt(segment.FontSize * scale)) : 0
+                    FontSize = segment.FontSize > 0 ? Mathf.Max(1, Mathf.RoundToInt(segment.FontSize * scale)) : 0,
+                    UseCustomPosition = segment.UseCustomPosition, Placement = segment.Placement,
+                    OffsetX = Mathf.RoundToInt(segment.OffsetX * scale), OffsetY = Mathf.RoundToInt(segment.OffsetY * scale)
                 });
             return result;
         }
@@ -105,8 +120,8 @@ namespace CameraCaptureStudio
         internal static Layout BuildLayout(CaptureOptions options)
         {
             Validate(options);
-            var layout = new Layout { LineCount = 1, LineHeight = 1f };
             var requested = new Dictionary<(Font Font, int Size), StringBuilder>();
+            var inlineSegments = new List<CaptureTextSegment>();
             foreach (CaptureTextSegment segment in options.TextSegments)
             {
                 if (segment == null || string.IsNullOrEmpty(segment.Text)) continue;
@@ -119,21 +134,58 @@ namespace CameraCaptureStudio
                     requested.Add(key, text);
                 }
                 text.Append(segment.Text);
-                float scale = (float)size / Mathf.Max(1, font.fontSize);
-                layout.LineHeight = Mathf.Max(layout.LineHeight, Mathf.Max(size, font.lineHeight * scale));
+                if (!segment.UseCustomPosition) inlineSegments.Add(segment);
             }
-            // Request every character before reading any UVs: a later request can rebuild the same atlas.
+            // Prepare every font/size first; independent layouts must not rebuild an atlas after UV reads.
             foreach (var pair in requested)
                 pair.Key.Font.RequestCharactersInTexture(pair.Value.ToString(), pair.Key.Size, FontStyle.Normal);
 
-            float x = 0f, width = 0f, minX = 0f, ascent = 0f, descent = 0f;
-            int line = 0;
-            bool previousWasCR = false, anyGlyph = false;
+            Layout layout = BuildFlow(inlineSegments, options.Font, options.FontSize);
+            var inlineRuns = new Queue<Run>(layout.Runs);
+            layout.Runs.Clear();
             foreach (CaptureTextSegment segment in options.TextSegments)
             {
                 if (segment == null || string.IsNullOrEmpty(segment.Text)) continue;
-                Font font = segment.Font != null ? segment.Font : options.Font;
-                int size = segment.FontSize > 0 ? segment.FontSize : Mathf.Max(1, options.FontSize);
+                Run run;
+                if (segment.UseCustomPosition)
+                {
+                    Layout independent = BuildFlow(new[] { segment }, options.Font, options.FontSize);
+                    run = independent.Runs[0];
+                    run.Bounds = independent.Bounds;
+                    run.LineHeight = independent.LineHeight;
+                }
+                else
+                {
+                    run = inlineRuns.Dequeue();
+                    run.Bounds = layout.Bounds;
+                    run.LineHeight = layout.LineHeight;
+                }
+                run.UseCustomPosition = segment.UseCustomPosition;
+                run.Placement = segment.Placement;
+                run.Offset = new Vector2(segment.OffsetX, segment.OffsetY);
+                layout.Runs.Add(run);
+            }
+            return layout;
+        }
+
+        private static Layout BuildFlow(IList<CaptureTextSegment> segments, Font defaultFont, int defaultSize)
+        {
+            var layout = new Layout { LineCount = 1, LineHeight = 1f };
+            foreach (CaptureTextSegment segment in segments)
+            {
+                Font font = segment.Font != null ? segment.Font : defaultFont;
+                int size = segment.FontSize > 0 ? segment.FontSize : Mathf.Max(1, defaultSize);
+                float scale = (float)size / Mathf.Max(1, font.fontSize);
+                layout.LineHeight = Mathf.Max(layout.LineHeight, Mathf.Max(size, font.lineHeight * scale));
+            }
+            float x = 0f, width = 0f, minX = 0f, ascent = 0f, descent = 0f;
+            int line = 0;
+            bool previousWasCR = false, anyGlyph = false;
+            foreach (CaptureTextSegment segment in segments)
+            {
+                if (segment == null || string.IsNullOrEmpty(segment.Text)) continue;
+                Font font = segment.Font != null ? segment.Font : defaultFont;
+                int size = segment.FontSize > 0 ? segment.FontSize : Mathf.Max(1, defaultSize);
                 var run = new Run { Font = font, FontSize = size };
                 layout.Runs.Add(run);
                 foreach (char character in segment.Text)
@@ -179,27 +231,35 @@ namespace CameraCaptureStudio
             return layout;
         }
 
+        internal static Vector2 GetOrigin(int width, int height, Run run, CaptureOptions options)
+        {
+            TextPlacement placement = run.UseCustomPosition ? run.Placement : options.Placement;
+            float left = options.Margin, bottom = options.Margin;
+            switch (placement)
+            {
+                case TextPlacement.TopCenter: case TextPlacement.Center: case TextPlacement.BottomCenter:
+                    left = (width - run.Bounds.width) * 0.5f; break;
+                case TextPlacement.TopRight: case TextPlacement.MiddleRight: case TextPlacement.BottomRight:
+                    left = width - options.Margin - run.Bounds.width; break;
+            }
+            switch (placement)
+            {
+                case TextPlacement.TopLeft: case TextPlacement.TopCenter: case TextPlacement.TopRight:
+                    bottom = height - options.Margin - run.Bounds.height; break;
+                case TextPlacement.MiddleLeft: case TextPlacement.Center: case TextPlacement.MiddleRight:
+                    bottom = (height - run.Bounds.height) * 0.5f; break;
+            }
+            return new Vector2(left - run.Bounds.xMin, bottom - run.Bounds.yMin) + run.Offset;
+        }
+
         internal static void Draw(RenderTexture target, CaptureOptions options)
         {
             Layout layout = BuildLayout(options);
-            if (layout.Bounds.height <= 0f) return;
+            bool visible = false;
+            foreach (Run run in layout.Runs) if (run.Glyphs.Count > 0) { visible = true; break; }
+            if (!visible) return;
             Shader shader = Shader.Find("Hidden/CameraCaptureStudio/Text");
             if (shader == null) throw new InvalidOperationException("找不到嵌字 Shader，请重新导入插件。");
-            float left = options.Margin, bottom = options.Margin;
-            switch (options.Placement)
-            {
-                case TextPlacement.TopCenter: case TextPlacement.Center: case TextPlacement.BottomCenter:
-                    left = (target.width - layout.Bounds.width) * 0.5f; break;
-                case TextPlacement.TopRight: case TextPlacement.MiddleRight: case TextPlacement.BottomRight:
-                    left = target.width - options.Margin - layout.Bounds.width; break;
-            }
-            switch (options.Placement)
-            {
-                case TextPlacement.TopLeft: case TextPlacement.TopCenter: case TextPlacement.TopRight:
-                    bottom = target.height - options.Margin - layout.Bounds.height; break;
-                case TextPlacement.MiddleLeft: case TextPlacement.Center: case TextPlacement.MiddleRight:
-                    bottom = (target.height - layout.Bounds.height) * 0.5f; break;
-            }
             var material = new Material(shader) { hideFlags = HideFlags.HideAndDontSave };
             RenderTexture previous = RenderTexture.active;
             try
@@ -213,6 +273,7 @@ namespace CameraCaptureStudio
                     foreach (Run run in layout.Runs)
                     {
                         if (run.Glyphs.Count == 0) continue;
+                        Vector2 origin = GetOrigin(target.width, target.height, run, options);
                         Texture atlas = run.Font.material != null ? run.Font.material.mainTexture : null;
                         if (atlas == null) throw new InvalidOperationException($"无法读取字体“{run.Font.name}”的图集。");
                         material.SetTexture("_MainTex", atlas);
@@ -223,8 +284,8 @@ namespace CameraCaptureStudio
                             foreach (Glyph glyph in run.Glyphs)
                             {
                                 CharacterInfo c = glyph.Character;
-                                float px = left + glyph.X - layout.Bounds.xMin;
-                                float py = bottom - glyph.Line * layout.LineHeight - layout.Bounds.yMin;
+                                float px = origin.x + glyph.X;
+                                float py = origin.y - glyph.Line * run.LineHeight;
                                 Emit(px + c.minX, py + c.minY, c.uvBottomLeft);
                                 Emit(px + c.minX, py + c.maxY, c.uvTopLeft);
                                 Emit(px + c.maxX, py + c.maxY, c.uvTopRight);

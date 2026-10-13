@@ -204,7 +204,7 @@ namespace CameraCaptureStudio
             font = (Font)EditorGUILayout.ObjectField(useTextSegments ? "默认字体" : "字体", font, typeof(Font), false);
             fontSize = EditorGUILayout.IntSlider(useTextSegments ? "默认字号 (px)" : "字体大小 (px)", fontSize, 8, 300);
             textColor = EditorGUILayout.ColorField("文字颜色", textColor);
-            placement = (TextPlacement)EditorGUILayout.Popup("嵌字位置", (int)placement, PlacementNames);
+            placement = (TextPlacement)EditorGUILayout.Popup(useTextSegments ? "默认位置（拼接）" : "嵌字位置", (int)placement, PlacementNames);
             margin = EditorGUILayout.IntSlider("边缘留白 (px)", margin, 0, 400);
             if (useTextSegments)
             {
@@ -267,7 +267,7 @@ namespace CameraCaptureStudio
                 if (textSegments.Count == 0 || CaptureTextSegment.Join(textSegments) != overlayText)
                 {
                     textSegments.Clear();
-                    textSegments.Add(new CaptureTextSegment { Text = overlayText });
+                    textSegments.Add(new CaptureTextSegment { Text = overlayText, Placement = placement });
                 }
             }
             else overlayText = CaptureTextSegment.Join(textSegments);
@@ -277,7 +277,7 @@ namespace CameraCaptureStudio
         private void DrawTextSegments()
         {
             if (textSegments == null) textSegments = new List<CaptureTextSegment>();
-            EditorGUILayout.HelpBox("每段文字可选不同字体和字号，按顺序拼接；空字体使用默认字体，未开启独立字号时使用全局字号。在段内换行即可换行显示，也可按字的位置拆分一段。", MessageType.Info);
+            EditorGUILayout.HelpBox("每段文字可选不同字体和字号，按顺序拼接；空字体使用默认字体，未开启独立字号时使用全局字号。开启独立位置后可选九宫格并微调；关闭时按顺序拼接，偏移只移动这一段。段内支持换行和按字拆分。", MessageType.Info);
             int action = 0, actionIndex = -1;
             for (int i = 0; i < textSegments.Count; i++)
             {
@@ -298,6 +298,13 @@ namespace CameraCaptureStudio
                 if (customSize)
                     segment.FontSize = EditorGUILayout.IntSlider("这段的字号 (px)", segment.FontSize > 0 ? segment.FontSize : fontSize, 8, 300);
                 else segment.FontSize = 0;
+                segment.UseCustomPosition = EditorGUILayout.Toggle("独立位置", segment.UseCustomPosition);
+                if (segment.UseCustomPosition)
+                    segment.Placement = (TextPlacement)EditorGUILayout.Popup("这段的位置", (int)segment.Placement, PlacementNames);
+                segment.OffsetX = EditorGUILayout.IntField("水平偏移 (px，+右)", segment.OffsetX);
+                segment.OffsetY = EditorGUILayout.IntField("垂直偏移 (px，+上)", segment.OffsetY);
+                if ((segment.OffsetX != 0 || segment.OffsetY != 0) && GUILayout.Button("重置位置微调"))
+                    segment.OffsetX = segment.OffsetY = 0;
                 int count = StringInfo.ParseCombiningCharacters(segment.Text).Length;
                 if (count > 1)
                 {
@@ -320,7 +327,7 @@ namespace CameraCaptureStudio
                 }
                 Repaint();
             }
-            if (GUILayout.Button("添加一段文字")) textSegments.Add(new CaptureTextSegment());
+            if (GUILayout.Button("添加一段文字")) textSegments.Add(new CaptureTextSegment { Placement = placement });
         }
 
         private void AlignToSceneView()
