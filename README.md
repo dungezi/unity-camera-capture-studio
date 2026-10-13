@@ -18,7 +18,7 @@ https://github.com/dungezi/unity-camera-capture-studio.git?path=/Packages/com.ca
 
 ### 方法二：本地 `.unitypackage`
 
-1. 从仓库下载 [CameraCaptureStudio-1.2.0.unitypackage](dist/CameraCaptureStudio-1.2.0.unitypackage) 到本机。
+1. 从仓库下载 [CameraCaptureStudio-1.3.0.unitypackage](dist/CameraCaptureStudio-1.3.0.unitypackage) 到本机。
 2. 在 Unity 中选择 **Assets → Import Package → Custom Package…**，打开下载的文件。
 3. 保持导入项目全选，点击 **Import**。插件会安装到 `Assets/CameraCaptureStudio`，之后从顶栏 **Window → 相机截图工作室** 打开。
 
@@ -34,6 +34,16 @@ https://github.com/dungezi/unity-camera-capture-studio.git?path=/Packages/com.ca
 4. 窗口内的实时预览会显示当前相机、滤镜和嵌字。选择滤镜；如需嵌字，填写文字，选择字体、字号、颜色和九宫格位置。
    新增“高对比黑白（红色点缀）”可保留相机画面中的红色区域，其余颜色转为强对比黑白；可关闭“保留红色点缀”得到纯黑白。“背景模糊”的“模糊程度”滑块为 0–100（默认 40），0 为原图。它会模糊整个相机画面，再叠加插件嵌字，使文字保持清晰。模糊按画面短边比例计算，预览和不同尺寸导出保持接近的视觉强度。
 5. 填写保存文件夹与文件名，选择 PNG 或 JPG，点击 **截图并保存**。窗口下方显示最后一张图片的预览与保存位置。同名文件会自动追加 `_2`、`_3` 等序号。
+
+### 一句话中使用不同字体
+
+在“后处理”中开启 **分段设置字体**。首次开启会保留原有嵌字内容。每段分别填写文字，选择“这段的字体”；不选择时使用下面的“默认字体”。每段还可开启“独立字号”，单独设置 8–300 px 的字体大小；关闭时继承“默认字号”。多段按顺序拼接成一段完整嵌字。
+
+例如第一段填写 `中文标题 ` 并选择中文字体，第二段填写 `Unity` 并选择英文字体，即可在同一行混排。空格放在相应段中，换行直接在文字框中输入。
+
+已有文字可通过“第几个字后拆分”与“拆分”按钮拆成两段，再对目标文字指定字体。需要只改中间几个字时，先拆开前面的部分，再拆开目标文字与后面的部分。支持添加、删除、上移、下移。字体和字号分别按段生效，文字颜色、九宫格位置和边距作用于完整嵌字，实时预览和 PNG/JPG 导出使用相同设置。
+
+关闭“分段设置字体”会合并当前内容并使用统一字体；再次开启时，如合并后的内容没有改动，会恢复各段字体设置。单字体模式编辑了内容后再开启分段模式，将以新内容重新创建一段。
 
 默认保存到 Unity 项目根目录下的 `Captures`。当前包内的 `BRUSHSCI.TTF` 是用户提供的预设字体；字体字段也接受 Unity 已导入的其他 TTF/OTF 字体。所选字体必须包含待嵌入的字符，例如中文内容需要支持中文字形的字体。原文件夹中的 `BRUSHSCI SDF.asset` 是 TextMesh Pro 字体资源；本插件使用 TTF 原字体进行文字生成，因此不依赖 TMP。
 
@@ -69,7 +79,7 @@ PNG 默认将最终透明度设为不透明，使导出的可见颜色与相机�
 
 当前实现针对 Unity 2022.3+ 的常规 2D 单眼相机截图。不同项目的 SRP、相机堆栈和自定义渲染效果可能影响最终截图；发布前应在目标 Unity 项目中实测。
 
-维护者可运行以下检查（Unity 路径替换为本机编辑器路径）。脚本在 `.validation/FilterSmoke` 创建独立测试项目，验证新滤镜、模糊强度、嵌字和 PNG/JPG 导出；结果见该目录的 `filter-smoke.log`。
+维护者可运行以下检查（Unity 路径替换为本机编辑器路径）。脚本在 `.validation/FilterSmoke` 创建独立测试项目，验证滤镜、模糊强度、单字体/分段字体嵌字、字体设置序列化和 PNG/JPG 导出；结果见该目录的 `filter-smoke.log`。
 
 ```powershell
 ./tools/run_filter_smoke.ps1 -UnityPath "你的Unity编辑器路径/Unity.exe"

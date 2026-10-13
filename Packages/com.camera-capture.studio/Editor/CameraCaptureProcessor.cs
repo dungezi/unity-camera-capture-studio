@@ -43,6 +43,7 @@ namespace CameraCaptureStudio
         internal bool PreserveRed = true;
         internal float BlurStrength = 40f;
         internal string Text;
+        internal List<CaptureTextSegment> TextSegments;
         internal Font Font;
         internal int FontSize;
         internal Color TextColor;
@@ -123,6 +124,7 @@ namespace CameraCaptureStudio
                 BlurStrength = options.BlurStrength,
                 Text = options.Font == null ? null : options.Text,
                 Font = options.Font,
+                TextSegments = CaptureTextRenderer.ScaleSegments(options.TextSegments, scale),
                 FontSize = Mathf.Max(1, Mathf.RoundToInt(options.FontSize * scale)),
                 TextColor = options.TextColor,
                 Placement = options.Placement,
@@ -163,7 +165,11 @@ namespace CameraCaptureStudio
                 options.Camera.targetTexture = previousCameraTarget;
 
                 ApplyFilter(cameraTarget, target, options);
-                if (!string.IsNullOrEmpty(options.Text)) DrawText(target, options);
+                if (CaptureTextRenderer.HasText(options))
+                {
+                    if (options.TextSegments != null) CaptureTextRenderer.Draw(target, options);
+                    else DrawText(target, options);
+                }
             }
             finally
             {
@@ -272,8 +278,7 @@ namespace CameraCaptureStudio
             int max = Mathf.Min(SystemInfo.maxTextureSize, 16384);
             if (options.Width < 1 || options.Height < 1 || options.Width > max || options.Height > max)
                 throw new ArgumentException($"分辨率必须在 1 到 {max} 像素之间。");
-            if (!string.IsNullOrEmpty(options.Text) && options.Font == null)
-                throw new ArgumentException("嵌字需要选择字体。");
+            CaptureTextRenderer.Validate(options);
             if (string.IsNullOrWhiteSpace(options.Directory))
                 throw new ArgumentException("请指定输出目录。");
         }

@@ -39,6 +39,7 @@ ASSETS = [
         for name in (
             "CameraCaptureProcessor.cs",
             "CameraCaptureWindow.cs",
+            "CaptureTextRenderer.cs",
             "CameraCaptureStudio.Editor.asmdef",
             "CaptureFilter.shader",
             "CaptureText.shader",

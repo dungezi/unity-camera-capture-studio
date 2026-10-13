@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
+using System.Reflection;
 using UnityEditor;
 using UnityEngine;
 
@@ -248,6 +250,187 @@ namespace CameraCaptureStudio
             }
         }
 
+        private static void MixedFontChecks()
+        {
+            Font script = AssetDatabase.LoadAssetAtPath<Font>("Assets/CameraCaptureStudio/Fonts/BRUSHSCI.TTF");
+            Font sans = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+            Check(script != null && sans != null && script != sans, "Two test fonts unavailable");
+            var options = new CaptureOptions { Font = script, FontSize = 48, TextSegments = new List<CaptureTextSegment>
+            {
+                new CaptureTextSegment { Text = "AB " }, new CaptureTextSegment { Text = "CDE", Font = sans }
+            }};
+            CaptureTextRenderer.Layout layout = CaptureTextRenderer.BuildLayout(options);
+            Check(layout.Runs.Count == 2 && layout.Runs[0].Font == script && layout.Runs[1].Font == sans, "Per-segment font selection/fallback failed");
+            Check(layout.Runs[1].Glyphs[0].X > layout.Runs[0].Glyphs[1].X, "Segments did not join in order");
+            options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "A\r" }, new CaptureTextSegment { Text = "\nB", Font = sans } };
+            layout = CaptureTextRenderer.BuildLayout(options);
+            Check(layout.LineCount == 2 && layout.Runs[1].Glyphs[0].Line == 1 && layout.Runs[1].Glyphs[0].X == 0, "Newline split across segments failed");
+            var unicode = new CaptureTextSegment { Text = "A\U0001F600e\u0301中", Font = sans, FontSize = 72 };
+            CaptureTextSegment right = unicode.Split(2);
+            Check(unicode.Text == "A\U0001F600" && right.Text == "e\u0301中" && right.Font == sans && right.FontSize == 72, "Split damaged a Unicode character or font assignment");
+            options.Font = null;
+            options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "TEST", Font = script } };
+            CaptureTextRenderer.Validate(options);
+            options.TextSegments[0].Font = null;
+            bool rejected = false;
+            try { CaptureTextRenderer.Validate(options); } catch (ArgumentException) { rejected = true; }
+            Check(rejected, "Missing segment/default font was not rejected");
+            options.TextSegments[0].Text = "";
+            CaptureTextRenderer.Validate(options);
+            Check(!CaptureTextRenderer.HasText(options), "Empty segment incorrectly required text rendering");
+
+            var gameObject = new GameObject("MixedFontCamera") { hideFlags = HideFlags.HideAndDontSave };
+            Camera camera = gameObject.AddComponent<Camera>();
+            camera.enabled = false; camera.cullingMask = 0;
+            camera.clearFlags = CameraClearFlags.SolidColor; camera.backgroundColor = Color.black;
+            var target = RenderTexture.GetTemporary(640, 360, 0, RenderTextureFormat.ARGB32);
+            RenderTexture previous = RenderTexture.active;
+            Texture2D mixed = null, uniform = null, oneRun = null, splitRun = null, blurred = null, scaled = null;
+            Font chinese = null;
+            options.Camera = camera; options.Width = 640; options.Height = 360;
+            options.Font = script; options.TextColor = Color.white; options.Placement = TextPlacement.Center;
+            options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "HELLO " }, new CaptureTextSegment { Text = "WORLD", Font = sans } };
+            try
+            {
+                CameraCaptureProcessor.RenderPreview(options, target); mixed = Read(target);
+                int visible = 0; foreach (Color c in mixed.GetPixels()) if (c.r > 0.8f) visible++;
+                Check(visible > 200, "Mixed-font overlay was not drawn");
+                options.TextSegments[1].Font = script;
+                CameraCaptureProcessor.RenderPreview(options, target); uniform = Read(target);
+                Check(Difference(mixed, uniform) > 0.002f, "Changing a segment font did not affect the image");
+                options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "HELLO WORLD" } };
+                CameraCaptureProcessor.RenderPreview(options, target); oneRun = Read(target);
+                options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "HELLO " }, new CaptureTextSegment { Text = "WORLD" } };
+                CameraCaptureProcessor.RenderPreview(options, target); splitRun = Read(target);
+                Check(Difference(oneRun, splitRun) < 0.001f, "Splitting a same-font line changed spacing or glyphs");
+                options.Filter = CaptureFilter.BackgroundBlur; options.BlurStrength = 100;
+                CameraCaptureProcessor.RenderPreview(options, target); blurred = Read(target);
+                Check(Difference(splitRun, blurred) < 0.001f, "Blur affected mixed-font text");
+                options.Font = null;
+                options.TextSegments[0].Font = script; options.TextSegments[1].Font = sans;
+                options.Width = 1280; options.Height = 720;
+                CameraCaptureProcessor.RenderPreview(options, target); scaled = Read(target);
+                visible = 0; foreach (Color c in scaled.GetPixels()) if (c.r > 0.8f) visible++;
+                Check(visible > 40, "Scaled mixed-font preview disappeared without a default font");
+                foreach (string candidate in new[] { "Microsoft YaHei", "Microsoft YaHei UI", "SimSun", "Noto Sans CJK SC" })
+                    if (Array.IndexOf(Font.GetOSInstalledFontNames(), candidate) >= 0) { chinese = Font.CreateDynamicFontFromOSFont(candidate, 48); break; }
+                options.Width = 640; options.Height = 360;
+                if (chinese != null)
+                {
+                    options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "中文", Font = chinese }, new CaptureTextSegment { Text = " Unity", Font = script } };
+                    CameraCaptureProcessor.RenderPreview(options, target);
+                    Texture2D cjk = Read(target);
+                    try
+                    {
+                        visible = 0; foreach (Color c in cjk.GetPixels()) if (c.r > 0.8f) visible++;
+                        Check(visible > 200, "Chinese/English mixed-font text did not render");
+                        string folder = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Results");
+                        Directory.CreateDirectory(folder);
+                        File.WriteAllBytes(Path.Combine(folder, "mixed-font-chinese-preview.png"), cjk.EncodeToPNG());
+                    }
+                    finally { UnityEngine.Object.DestroyImmediate(cjk); }
+                }
+                options.TextSegments = new List<CaptureTextSegment> { new CaptureTextSegment { Text = "HELLO ", Font = script }, new CaptureTextSegment { Text = "WORLD", Font = sans } };
+                options.Directory = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Results");
+                options.FileName = "mixed-font-export"; options.Format = CaptureFormat.Png;
+                string saved = CameraCaptureProcessor.Capture(options, out Texture2D thumbnail);
+                UnityEngine.Object.DestroyImmediate(thumbnail);
+                var loaded = new Texture2D(2, 2);
+                try
+                {
+                    Check(loaded.LoadImage(File.ReadAllBytes(saved)) && loaded.width == 640 && loaded.height == 360, "Mixed-font PNG export failed");
+                    Check(Difference(mixed, loaded) < 0.001f, "Mixed-font preview and export differ");
+                }
+                finally { UnityEngine.Object.DestroyImmediate(loaded); }
+                Debug.Log("MIXED_FONT_SMOKE_PASS");
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                foreach (Texture2D image in new[] { mixed, uniform, oneRun, splitRun, blurred, scaled }) if (image != null) UnityEngine.Object.DestroyImmediate(image);
+                if (chinese != null) UnityEngine.Object.DestroyImmediate(chinese);
+                RenderTexture.ReleaseTemporary(target);
+                UnityEngine.Object.DestroyImmediate(gameObject);
+            }
+
+            var window = ScriptableObject.CreateInstance<CameraCaptureWindow>();
+            var restored = ScriptableObject.CreateInstance<CameraCaptureWindow>();
+            try
+            {
+                const BindingFlags flags = BindingFlags.Instance | BindingFlags.NonPublic;
+                Type type = typeof(CameraCaptureWindow);
+                FieldInfo textField = type.GetField("overlayText", flags), segmentsField = type.GetField("textSegments", flags);
+                type.GetField("font", flags).SetValue(window, script);
+                textField.SetValue(window, "HELLO WORLD");
+                MethodInfo switchMode = type.GetMethod("SetTextMode", flags);
+                switchMode.Invoke(window, new object[] { true });
+                var segments = (List<CaptureTextSegment>)segmentsField.GetValue(window);
+                Check(segments.Count == 1 && segments[0].Text == "HELLO WORLD", "Legacy text did not migrate");
+                segments.Add(segments[0].Split(5)); segments[1].Font = sans; segments[1].FontSize = 72;
+                switchMode.Invoke(window, new object[] { false }); switchMode.Invoke(window, new object[] { true });
+                Check(segments.Count == 2 && segments[1].Font == sans && segments[1].FontSize == 72, "Mode switch lost font assignments");
+                EditorJsonUtility.FromJsonOverwrite(EditorJsonUtility.ToJson(window), restored);
+                var restoredSegments = (List<CaptureTextSegment>)segmentsField.GetValue(restored);
+                Check(restoredSegments.Count == 2 && restoredSegments[1].Font == sans && restoredSegments[1].FontSize == 72 && CaptureTextSegment.Join(restoredSegments) == "HELLO WORLD", "Window serialization lost segment text/fonts");
+                switchMode.Invoke(window, new object[] { false }); textField.SetValue(window, "NEW"); switchMode.Invoke(window, new object[] { true });
+                segments = (List<CaptureTextSegment>)segmentsField.GetValue(window);
+                Check(segments.Count == 1 && segments[0].Text == "NEW", "Mode switch restored stale text after an edit");
+            }
+            finally { UnityEngine.Object.DestroyImmediate(window); UnityEngine.Object.DestroyImmediate(restored); }
+        }
+
+        private static void SegmentSizeChecks()
+        {
+            Font font = AssetDatabase.LoadAssetAtPath<Font>("Assets/CameraCaptureStudio/Fonts/BRUSHSCI.TTF");
+            var options = new CaptureOptions { FontSize = 48, TextSegments = new List<CaptureTextSegment>
+            {
+                new CaptureTextSegment { Text = "small ", Font = font, FontSize = 24 },
+                new CaptureTextSegment { Text = "BIG", Font = font, FontSize = 96 },
+                new CaptureTextSegment { Text = " A", Font = font }
+            }};
+            var layout = CaptureTextRenderer.BuildLayout(options);
+            Check(layout.Runs[0].FontSize == 24 && layout.Runs[1].FontSize == 96 && layout.Runs[2].FontSize == 48, "Size inheritance failed");
+            CharacterInfo small = layout.Runs[0].Glyphs[0].Character, large = layout.Runs[1].Glyphs[0].Character;
+            Check(large.maxY - large.minY > 2 * (small.maxY - small.minY), "Custom size did not enlarge glyphs");
+            var half = CaptureTextRenderer.ScaleSegments(options.TextSegments, 0.5f);
+            Check(half[0].FontSize == 12 && half[1].FontSize == 48 && half[2].FontSize == 0 && options.TextSegments[1].FontSize == 96, "Preview mutated sizes or lost inheritance");
+            var go = new GameObject("SizeCamera") { hideFlags = HideFlags.HideAndDontSave };
+            Camera camera = go.AddComponent<Camera>(); camera.enabled = false; camera.cullingMask = 0;
+            camera.clearFlags = CameraClearFlags.SolidColor; camera.backgroundColor = Color.black;
+            var target = RenderTexture.GetTemporary(640, 360, 0);
+            RenderTexture previous = RenderTexture.active;
+            Texture2D original = null, resized = null, direct = null;
+            options.Camera = camera; options.Width = 640; options.Height = 360;
+            options.TextColor = Color.white; options.Placement = TextPlacement.Center;
+            try
+            {
+                CameraCaptureProcessor.RenderPreview(options, target); original = Read(target);
+                options.Width = 1280; options.Height = 720;
+                CameraCaptureProcessor.RenderPreview(options, target); resized = Read(target);
+                options.Width = 640; options.Height = 360; options.FontSize = 24; options.TextSegments = half;
+                CameraCaptureProcessor.RenderPreview(options, target); direct = Read(target);
+                Check(Difference(resized, direct) < 0.001f, "Custom sizes do not scale correctly");
+                options.FontSize = 48; options.TextSegments[0].FontSize = 24; options.TextSegments[1].FontSize = 96;
+                options.Directory = Path.Combine(Directory.GetParent(Application.dataPath).FullName, "Results"); options.FileName = "mixed-size-export";
+                foreach (CaptureFormat format in new[] { CaptureFormat.Png, CaptureFormat.Jpg })
+                {
+                    options.Format = format; options.JpegQuality = 95;
+                    string saved = CameraCaptureProcessor.Capture(options, out Texture2D thumbnail);
+                    UnityEngine.Object.DestroyImmediate(thumbnail);
+                    var image = new Texture2D(2, 2);
+                    try { Check(image.LoadImage(File.ReadAllBytes(saved)) && Difference(original, image) < 0.015f, "Custom-size export differs: " + format); }
+                    finally { UnityEngine.Object.DestroyImmediate(image); }
+                }
+                Debug.Log("SEGMENT_SIZE_SMOKE_PASS");
+            }
+            finally
+            {
+                RenderTexture.active = previous;
+                foreach (Texture2D image in new[] { original, resized, direct }) if (image != null) UnityEngine.Object.DestroyImmediate(image);
+                RenderTexture.ReleaseTemporary(target); UnityEngine.Object.DestroyImmediate(go);
+            }
+        }
+
         public static void Run()
         {
             try
@@ -258,6 +441,8 @@ namespace CameraCaptureStudio
                 BlurChecks();
                 ScaleChecks();
                 CameraChecks();
+                MixedFontChecks();
+                SegmentSizeChecks();
                 Debug.Log("FILTER_SMOKE_PASS checks=" + checks);
                 EditorApplication.Exit(0);
             }

@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Collections.Generic;
+using System.Globalization;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -49,6 +51,8 @@ namespace CameraCaptureStudio
         [SerializeField] private bool preserveRed = true;
         [SerializeField] private float blurStrength = 40f;
         [SerializeField] private string overlayText = "";
+        [SerializeField] private bool useTextSegments;
+        [SerializeField] private List<CaptureTextSegment> textSegments = new List<CaptureTextSegment>();
         [SerializeField] private Font font;
         [SerializeField] private int fontSize = 64;
         [SerializeField] private Color textColor = Color.white;
@@ -189,14 +193,25 @@ namespace CameraCaptureStudio
                 blurStrength = EditorGUILayout.Slider("模糊程度", blurStrength, 0f, 100f);
                 EditorGUILayout.HelpBox("0 为原图。先模糊相机画面，再叠加嵌字，文字保持清晰。", MessageType.Info);
             }
-            EditorGUILayout.LabelField("嵌字内容");
-            overlayText = EditorGUILayout.TextArea(overlayText, GUILayout.MinHeight(64));
-            font = (Font)EditorGUILayout.ObjectField("字体", font, typeof(Font), false);
-            fontSize = EditorGUILayout.IntSlider("字体大小 (px)", fontSize, 8, 300);
+            bool nextTextMode = EditorGUILayout.Toggle("分段设置字体", useTextSegments);
+            if (nextTextMode != useTextSegments) SetTextMode(nextTextMode);
+            if (useTextSegments) DrawTextSegments();
+            else
+            {
+                EditorGUILayout.LabelField("嵌字内容");
+                overlayText = EditorGUILayout.TextArea(overlayText, GUILayout.MinHeight(64));
+            }
+            font = (Font)EditorGUILayout.ObjectField(useTextSegments ? "默认字体" : "字体", font, typeof(Font), false);
+            fontSize = EditorGUILayout.IntSlider(useTextSegments ? "默认字号 (px)" : "字体大小 (px)", fontSize, 8, 300);
             textColor = EditorGUILayout.ColorField("文字颜色", textColor);
             placement = (TextPlacement)EditorGUILayout.Popup("嵌字位置", (int)placement, PlacementNames);
             margin = EditorGUILayout.IntSlider("边缘留白 (px)", margin, 0, 400);
-            if (!string.IsNullOrEmpty(overlayText) && font == null)
+            if (useTextSegments)
+            {
+                try { CaptureTextRenderer.Validate(new CaptureOptions { TextSegments = textSegments, Font = font }); }
+                catch (ArgumentException exception) { EditorGUILayout.HelpBox(exception.Message, MessageType.Warning); }
+            }
+            else if (!string.IsNullOrEmpty(overlayText) && font == null)
                 EditorGUILayout.HelpBox("嵌字需要选择一款字体。预置字体仅覆盖其自身包含的字符。", MessageType.Warning);
 
             EditorGUILayout.Space(10);
@@ -244,6 +259,70 @@ namespace CameraCaptureStudio
             EditorGUILayout.EndScrollView();
         }
 
+        private void SetTextMode(bool segmented)
+        {
+            if (textSegments == null) textSegments = new List<CaptureTextSegment>();
+            if (segmented)
+            {
+                if (textSegments.Count == 0 || CaptureTextSegment.Join(textSegments) != overlayText)
+                {
+                    textSegments.Clear();
+                    textSegments.Add(new CaptureTextSegment { Text = overlayText });
+                }
+            }
+            else overlayText = CaptureTextSegment.Join(textSegments);
+            useTextSegments = segmented;
+        }
+
+        private void DrawTextSegments()
+        {
+            if (textSegments == null) textSegments = new List<CaptureTextSegment>();
+            EditorGUILayout.HelpBox("每段文字可选不同字体和字号，按顺序拼接；空字体使用默认字体，未开启独立字号时使用全局字号。在段内换行即可换行显示，也可按字的位置拆分一段。", MessageType.Info);
+            int action = 0, actionIndex = -1;
+            for (int i = 0; i < textSegments.Count; i++)
+            {
+                if (textSegments[i] == null) textSegments[i] = new CaptureTextSegment();
+                CaptureTextSegment segment = textSegments[i];
+                EditorGUILayout.BeginVertical(EditorStyles.helpBox);
+                EditorGUILayout.BeginHorizontal();
+                EditorGUILayout.LabelField($"第 {i + 1} 段", EditorStyles.boldLabel);
+                using (new EditorGUI.DisabledScope(i == 0))
+                    if (GUILayout.Button("上移", GUILayout.Width(40))) { action = -1; actionIndex = i; }
+                using (new EditorGUI.DisabledScope(i == textSegments.Count - 1))
+                    if (GUILayout.Button("下移", GUILayout.Width(40))) { action = 1; actionIndex = i; }
+                if (GUILayout.Button("删除", GUILayout.Width(40))) { action = 2; actionIndex = i; }
+                EditorGUILayout.EndHorizontal();
+                segment.Text = EditorGUILayout.TextArea(segment.Text ?? "", GUILayout.MinHeight(40));
+                segment.Font = (Font)EditorGUILayout.ObjectField("这段的字体", segment.Font, typeof(Font), false);
+                bool customSize = EditorGUILayout.Toggle("独立字号", segment.FontSize > 0);
+                if (customSize)
+                    segment.FontSize = EditorGUILayout.IntSlider("这段的字号 (px)", segment.FontSize > 0 ? segment.FontSize : fontSize, 8, 300);
+                else segment.FontSize = 0;
+                int count = StringInfo.ParseCombiningCharacters(segment.Text).Length;
+                if (count > 1)
+                {
+                    EditorGUILayout.BeginHorizontal();
+                    segment.SplitAfter = EditorGUILayout.IntSlider("第几个字后拆分", segment.SplitAfter, 1, count - 1);
+                    if (GUILayout.Button("拆分", GUILayout.Width(44))) { action = 3; actionIndex = i; }
+                    EditorGUILayout.EndHorizontal();
+                }
+                EditorGUILayout.EndVertical();
+            }
+            if (actionIndex >= 0)
+            {
+                if (action == 2) textSegments.RemoveAt(actionIndex);
+                else if (action == 3) textSegments.Insert(actionIndex + 1, textSegments[actionIndex].Split(textSegments[actionIndex].SplitAfter));
+                else
+                {
+                    CaptureTextSegment moved = textSegments[actionIndex];
+                    textSegments[actionIndex] = textSegments[actionIndex + action];
+                    textSegments[actionIndex + action] = moved;
+                }
+                Repaint();
+            }
+            if (GUILayout.Button("添加一段文字")) textSegments.Add(new CaptureTextSegment());
+        }
+
         private void AlignToSceneView()
         {
             SceneView sceneView = SceneView.lastActiveSceneView;
@@ -279,6 +358,7 @@ namespace CameraCaptureStudio
                     PreserveRed = preserveRed,
                     BlurStrength = blurStrength,
                     Text = overlayText,
+                    TextSegments = useTextSegments ? textSegments : null,
                     Font = font,
                     FontSize = fontSize,
                     TextColor = textColor,
@@ -348,6 +428,7 @@ namespace CameraCaptureStudio
                     PreserveRed = preserveRed,
                     BlurStrength = blurStrength,
                     Text = overlayText,
+                    TextSegments = useTextSegments ? textSegments : null,
                     Font = font,
                     FontSize = fontSize,
                     TextColor = textColor,
